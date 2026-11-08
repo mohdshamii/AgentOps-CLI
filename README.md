@@ -85,8 +85,8 @@ agentops/
 Install via pip in editable development mode:
 
 ```bash
-git clone https://github.com/your-username/codeforkcli.git
-cd codeforkcli
+git clone https://github.com/mohdshamii/AgentOps-CLI.git
+cd AgentOps-CLI
 pip install -r requirements-dev.txt
 pip install -e .
 ```
