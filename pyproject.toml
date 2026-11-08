@@ -1,0 +1,50 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agentopscli"
+version = "1.0.0"
+description = "Commercial-grade AI coding CLI and agent operations platform"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "UNLICENSED"}
+authors = [
+    {name = "AgentOpsCLI Contributors"}
+]
+keywords = [
+    "ai",
+    "cli",
+    "coding-agent",
+    "agentops",
+    "ollama",
+    "openai",
+    "anthropic",
+    "gemini",
+]
+dependencies = [
+    "httpx>=0.24.0",
+    "rich>=13.0.0",
+    "prompt-toolkit>=3.0.0",
+    "pydantic>=2.0.0",
+    "pyyaml>=6.0",
+    "python-dotenv>=1.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+]
+
+[project.scripts]
+agentops = "agentops.cli.main:cli_entrypoint"
+agentopscli = "agentops.cli.main:cli_entrypoint"
+mycodecli = "agentops.cli.main:cli_entrypoint"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["agentops*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests", "test_ollama_provider.py", "test_smart_router.py"]
+python_files = ["test_*.py", "*_test.py"]

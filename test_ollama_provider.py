@@ -3,6 +3,7 @@ test_ollama_provider.py
 Run: pytest test_ollama_provider.py -v
 """
 
+import asyncio
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 from ollama_provider import (
@@ -48,73 +49,87 @@ def test_converts_multi_turn():
     assert len(result) == 3
     assert result[1]["role"] == "assistant"
 
-@pytest.mark.asyncio
-async def test_ollama_running_true():
-    mock_response = MagicMock()
-    mock_response.status_code = 200
-    with patch("ollama_provider.httpx.AsyncClient") as MockClient:
-        MockClient.return_value.__aenter__.return_value.get = AsyncMock(return_value=mock_response)
-        result = await check_ollama_running()
-    assert result is True
+def test_ollama_running_true():
+    async def _test():
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        with patch("ollama_provider.httpx.AsyncClient") as MockClient:
+            MockClient.return_value.__aenter__.return_value.get = AsyncMock(return_value=mock_response)
+            result = await check_ollama_running()
+        assert result is True
+    asyncio.run(_test())
 
-@pytest.mark.asyncio
-async def test_ollama_running_false_on_exception():
-    with patch("ollama_provider.httpx.AsyncClient") as MockClient:
-        MockClient.return_value.__aenter__.return_value.get = AsyncMock(side_effect=Exception("refused"))
-        result = await check_ollama_running()
-    assert result is False
+def test_ollama_running_false_on_exception():
+    async def _test():
+        with patch("ollama_provider.httpx.AsyncClient") as MockClient:
+            MockClient.return_value.__aenter__.return_value.get = AsyncMock(side_effect=Exception("Connection refused"))
+            result = await check_ollama_running()
+        assert result is False
+    asyncio.run(_test())
 
-@pytest.mark.asyncio
-async def test_list_models_returns_names():
-    mock_response = MagicMock()
-    mock_response.status_code = 200
-    mock_response.json.return_value = {"models": [{"name": "llama3:8b"}, {"name": "codellama:34b"}]}
-    mock_response.raise_for_status = MagicMock()
-    with patch("ollama_provider.httpx.AsyncClient") as MockClient:
-        MockClient.return_value.__aenter__.return_value.get = AsyncMock(return_value=mock_response)
-        models = await list_ollama_models()
-    assert "llama3:8b" in models
-
-@pytest.mark.asyncio
-async def test_ollama_chat_returns_anthropic_format():
-    mock_response = MagicMock()
-    mock_response.raise_for_status = MagicMock()
-    mock_response.json.return_value = {
-        "message": {"content": "42 is the answer."},
-        "created_at": "2026-01-01T00:00:00Z",
-        "prompt_eval_count": 10,
-        "eval_count": 8,
-    }
-    with patch("ollama_provider.httpx.AsyncClient") as MockClient:
-        MockClient.return_value.__aenter__.return_value.post = AsyncMock(return_value=mock_response)
-        result = await ollama_chat(
-            model="llama3:8b",
-            messages=[{"role": "user", "content": "What is 6*7?"}]
-        )
-    assert result["type"] == "message"
-    assert result["role"] == "assistant"
-    assert "42" in result["content"][0]["text"]
-
-@pytest.mark.asyncio
-async def test_ollama_chat_prepends_system():
-    captured = {}
-    async def mock_post(url, json=None, **kwargs):
-        captured.update(json or {})
-        m = MagicMock()
-        m.raise_for_status = MagicMock()
-        m.json.return_value = {
-            "message": {"content": "ok"},
-            "created_at": "",
-            "prompt_eval_count": 1,
-            "eval_count": 1
+def test_list_models_returns_names():
+    async def _test():
+        mock_response = MagicMock()
+        mock_response.json.return_value = {
+            "models": [
+                {"name": "llama3:8b", "size": 4000000000},
+                {"name": "codellama:34b", "size": 19000000000},
+            ]
         }
-        return m
-    with patch("ollama_provider.httpx.AsyncClient") as MockClient:
-        MockClient.return_value.__aenter__.return_value.post = mock_post
-        await ollama_chat(
-            model="llama3:8b",
-            messages=[{"role": "user", "content": "Hi"}],
-            system="Be helpful."
-        )
-    assert captured["messages"][0]["role"] == "system"
-    assert "helpful" in captured["messages"][0]["content"]
+        mock_response.raise_for_status = MagicMock()
+        with patch("ollama_provider.httpx.AsyncClient") as MockClient:
+            MockClient.return_value.__aenter__.return_value.get = AsyncMock(return_value=mock_response)
+            models = await list_ollama_models()
+        assert "llama3:8b" in models
+        assert "codellama:34b" in models
+    asyncio.run(_test())
+
+def test_ollama_chat_returns_anthropic_format():
+    async def _test():
+        mock_response = MagicMock()
+        mock_response.json.return_value = {
+            "message": {"role": "assistant", "content": "Hello back!"},
+            "created_at": "2024-01-01T00:00:00Z",
+            "prompt_eval_count": 10,
+            "eval_count": 5,
+        }
+        mock_response.raise_for_status = MagicMock()
+        with patch("ollama_provider.httpx.AsyncClient") as MockClient:
+            MockClient.return_value.__aenter__.return_value.post = AsyncMock(return_value=mock_response)
+            result = await ollama_chat(
+                model="llama3:8b",
+                messages=[{"role": "user", "content": "Hello"}],
+            )
+        assert result["type"] == "message"
+        assert result["role"] == "assistant"
+        assert result["content"][0]["text"] == "Hello back!"
+        assert result["usage"]["input_tokens"] == 10
+        assert result["usage"]["output_tokens"] == 5
+    asyncio.run(_test())
+
+def test_ollama_chat_prepends_system():
+    async def _test():
+        captured_payload = {}
+        async def mock_post(url, json=None):
+            nonlocal captured_payload
+            captured_payload = json
+            mock_resp = MagicMock()
+            mock_resp.json.return_value = {
+                "message": {"content": "ok"},
+                "created_at": "now",
+                "prompt_eval_count": 5,
+                "eval_count": 2,
+            }
+            mock_resp.raise_for_status = MagicMock()
+            return mock_resp
+
+        with patch("ollama_provider.httpx.AsyncClient") as MockClient:
+            MockClient.return_value.__aenter__.return_value.post = mock_post
+            await ollama_chat(
+                model="llama3:8b",
+                messages=[{"role": "user", "content": "test"}],
+                system="You are a helpful assistant.",
+            )
+        assert captured_payload["messages"][0]["role"] == "system"
+        assert captured_payload["messages"][0]["content"] == "You are a helpful assistant."
+    asyncio.run(_test())

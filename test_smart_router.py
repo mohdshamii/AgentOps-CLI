@@ -5,10 +5,14 @@ Tests for the SmartRouter.
 Run: pytest test_smart_router.py -v
 """
 
-import pytest
+import os
 import asyncio
+import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 from smart_router import SmartRouter, Provider
+
+# Ensure mock key exists for tests
+os.environ["FAKE_KEY"] = "mock-key-value"
 
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
@@ -63,37 +67,37 @@ def test_score_cost_strategy_prefers_cheaper():
 
 
 def test_score_balanced_strategy_uses_both():
-    p = make_provider("test", latency=200.0, cost=0.002)
-    s = p.score("balanced")
-    assert s > 0
+    p = make_provider("test", latency=100.0, cost=0.002)
+    score = p.score("balanced")
+    assert 0 < score < float("inf")
 
 
 def test_score_error_rate_penalty():
-    clean = make_provider("clean", errors=0, requests=10)
-    dirty = make_provider("dirty", errors=8, requests=10)
-    assert clean.score() < dirty.score()
+    reliable = make_provider("reliable", requests=100, errors=1)
+    unreliable = make_provider("unreliable", requests=100, errors=50)
+    assert reliable.score() < unreliable.score()
 
 
 # ── SmartRouter.is_large_request() ───────────────────────────────────────────
 
 def test_is_large_request_short():
     r = make_router()
-    msgs = [{"role": "user", "content": "Hello!"}]
-    assert r.is_large_request(msgs) is False
+    messages = [{"role": "user", "content": "What is 2+2?"}]
+    assert r.is_large_request(messages) is False
 
 
 def test_is_large_request_long():
     r = make_router()
-    msgs = [{"role": "user", "content": "x" * 3000}]
-    assert r.is_large_request(msgs) is True
+    messages = [{"role": "user", "content": "x" * 2500}]
+    assert r.is_large_request(messages) is True
 
 
-# ── SmartRouter.select_provider() ────────────────────────────────────────────
+# ── SmartRouter.select_provider() ─────────────────────────────────────────────
 
 def test_select_provider_picks_best_score():
-    p1 = make_provider("slow", latency=800.0)
-    p2 = make_provider("fast", latency=50.0)
-    r = make_router(providers=[p1, p2], strategy="latency")
+    fast = make_provider("fast", latency=50.0, cost=0.001)
+    slow = make_provider("slow", latency=500.0, cost=0.001)
+    r = make_router(providers=[slow, fast], strategy="latency")
     selected = r.select_provider()
     assert selected.name == "fast"
 
@@ -131,59 +135,65 @@ def test_get_model_small_request():
 
 # ── SmartRouter.route() ───────────────────────────────────────────────────────
 
-@pytest.mark.asyncio
-async def test_route_returns_best_provider():
-    p1 = make_provider("expensive", cost=0.05, latency=50.0)
-    p2 = make_provider("cheap", cost=0.0005, latency=200.0)
-    r = make_router(providers=[p1, p2], strategy="cost")
-    result = await r.route([{"role": "user", "content": "Hi"}], "claude-haiku")
-    assert result["provider"] == "cheap"
+def test_route_returns_best_provider():
+    async def _test():
+        p1 = make_provider("expensive", cost=0.05, latency=50.0)
+        p2 = make_provider("cheap", cost=0.0005, latency=200.0)
+        r = make_router(providers=[p1, p2], strategy="cost")
+        result = await r.route([{"role": "user", "content": "Hi"}], "claude-haiku")
+        assert result["provider"] == "cheap"
+    asyncio.run(_test())
 
 
-@pytest.mark.asyncio
-async def test_route_raises_when_no_providers():
-    p = make_provider("a", healthy=False)
-    r = make_router(providers=[p])
-    with pytest.raises(RuntimeError, match="no providers available"):
-        await r.route([{"role": "user", "content": "Hi"}])
+def test_route_raises_when_no_providers():
+    async def _test():
+        p = make_provider("a", healthy=False)
+        r = make_router(providers=[p])
+        with pytest.raises(RuntimeError, match="no providers available"):
+            await r.route([{"role": "user", "content": "Hi"}])
+    asyncio.run(_test())
 
 
-@pytest.mark.asyncio
-async def test_route_excludes_providers():
-    p1 = make_provider("openai", latency=50.0)
-    p2 = make_provider("gemini", latency=200.0)
-    r = make_router(providers=[p1, p2], strategy="latency")
-    result = await r.route(
-        [{"role": "user", "content": "Hi"}],
-        exclude_providers=["openai"]
-    )
-    assert result["provider"] == "gemini"
+def test_route_excludes_providers():
+    async def _test():
+        p1 = make_provider("openai", latency=50.0)
+        p2 = make_provider("gemini", latency=200.0)
+        r = make_router(providers=[p1, p2], strategy="latency")
+        result = await r.route(
+            [{"role": "user", "content": "Hi"}],
+            exclude_providers=["openai"]
+        )
+        assert result["provider"] == "gemini"
+    asyncio.run(_test())
 
 
 # ── SmartRouter.record_result() ──────────────────────────────────────────────
 
-@pytest.mark.asyncio
-async def test_record_result_updates_latency():
-    p = make_provider("openai", latency=200.0)
-    r = make_router(providers=[p])
-    await r.record_result("openai", success=True, duration_ms=100.0)
-    assert p.avg_latency_ms < 200.0  # should decrease toward 100
+def test_record_result_updates_latency():
+    async def _test():
+        p = make_provider("openai", latency=200.0)
+        r = make_router(providers=[p])
+        await r.record_result("openai", success=True, duration_ms=100.0)
+        assert p.avg_latency_ms < 200.0  # should decrease toward 100
+    asyncio.run(_test())
 
 
-@pytest.mark.asyncio
-async def test_record_result_increments_requests():
-    p = make_provider("openai")
-    r = make_router(providers=[p])
-    await r.record_result("openai", success=True, duration_ms=100.0)
-    assert p.request_count == 1
+def test_record_result_increments_requests():
+    async def _test():
+        p = make_provider("openai")
+        r = make_router(providers=[p])
+        await r.record_result("openai", success=True, duration_ms=100.0)
+        assert p.request_count == 1
+    asyncio.run(_test())
 
 
-@pytest.mark.asyncio
-async def test_record_result_increments_errors():
-    p = make_provider("openai")
-    r = make_router(providers=[p])
-    await r.record_result("openai", success=False, duration_ms=0)
-    assert p.error_count == 1
+def test_record_result_increments_errors():
+    async def _test():
+        p = make_provider("openai")
+        r = make_router(providers=[p])
+        await r.record_result("openai", success=False, duration_ms=0)
+        assert p.error_count == 1
+    asyncio.run(_test())
 
 
 # ── SmartRouter.status() ─────────────────────────────────────────────────────
